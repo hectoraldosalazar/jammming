@@ -1,22 +1,22 @@
-import React, { useState } from 'react';
+import React from 'react';
 import './Playlist.css';
 import TrackList from '../TrackList/TrackList';
 
-const Playlist = ({ playlistTracks }) => {
+const Playlist = ({ playlistTracks, onRemove, playlistName, onNameChange }) => {
 
-    const [playlistName, setPlaylistName] = useState('New Playlist');
-
+    
+   // Le pasa la nota del nuevo nombre a su padre App.jsx el cual en realmente es el que actualiza el nombre
     const handleNameChange = (event) => {
-        setPlaylistName(event.target.value);
+        onNameChange(event.target.value);
     };
 
     return (
         <div className="Playlist">
-            <input value={playlistName} onChange={handleNameChange} />
-            <TrackList tracks={playlistTracks} isRemoval={true}/>
+            <input type="text" value={playlistName} onChange={handleNameChange} />
+            <TrackList tracks={playlistTracks} onRemove={onRemove} isRemoval={true}/>
             <button className="Playlist-save">SAVE TO SPOTIFY</button>
         </div>
     );
-}
+};
 
 export default Playlist;
