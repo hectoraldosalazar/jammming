@@ -19,9 +19,13 @@ const generateCodeChallenge = async (codeVerifier) => {
         .replace(/=+$/, '');
 };
 
+// Variable para cachear el ID del usuario y evitar llamadas repetidas.
+let userId;
+
+
 const Spotify = {
 
-    // ** Se encarga de redirigir al usuario a spotify... este es el prmer contacto
+    // ** Se encarga de redirigir al usuario a spotify... este es el primer contacto
     //    ** La primera llamda de nuestra aplicacion con Spotify
     async redirectToSpotifyAuth() {
         // Genera un nuevo secreto (Verifier) para esta seccion de login.
@@ -151,6 +155,58 @@ const Spotify = {
         }
     },
 
+    // ** Obtiene el ID del usuario actual, usando caché para evitar llamadas innecesarias.
+    async getCurrentUserId() {
+        if (userId) {
+            return userId;
+        }
+
+        const accessToken = await this.getAccessToken();
+        const headers = { Authorization: `Bearer ${accessToken}` };
+        const response = await fetch('https://api.spotify.com/v1/me', { headers });
+        if (!response.ok) throw new Error(`Failed to fetch user data. Status: ${response.status}`);
+
+        const userData = await response.json();
+        userId = userData.id;
+        return userId;
+    },
+
+    // ** Obtiene la lista de playlists del usuario actual.
+    async getUserPlaylists() {
+        const currentUserId = await this.getCurrentUserId();
+        const accessToken = await this.getAccessToken();
+        const headers = { Authorization: `Bearer ${accessToken}` };
+
+        const response = await fetch(`https://api.spotify.com/v1/users/${currentUserId}/playlists`, { headers });
+        if(!response.ok) throw new Error(`Failed to fetch user playlist. Status: ${response.status}`);
+
+        const jsonResponse = await response.json();
+        return jsonResponse.items.map(playlist => ({
+            id: playlist.id,
+            name: playlist.name
+        }));
+    },
+
+    // ** Obtiene los tracks de una playlist específica usando ID.
+    async getPlaylist(playlistId) {
+        const accessToken = await this.getAccessToken();
+        const headers = { Authorization: `Bearer ${accessToken}`};
+
+        const response = await fetch(`https://api.spotify.com/v1/playlists/${playlistId}/tracks`, { headers });
+        if (!response.ok) throw new Error(`Failed to fetch playlists tracks. Status: ${response.status}`);
+
+        const jsonResponse = await response.json();
+        // Mapeamos la respuesta para devolver un array de tracks con el formato que el app necestia.
+        // Filtramos por si algún item no tiene track, para evitar errores.
+        return jsonResponse.items.filter(item => item.track).map(item => ({
+            id: item.track.id,
+            name: item.track.name,
+            artist: item.track.artists[0].name,
+            album: item.track.album.name,
+            uri: item.track.uri
+        }));
+    },
+
     // ** Esta funcion busca canciones en Spotify
     async search(term) {
         const accessToken = await this.getAccessToken();
@@ -182,7 +238,7 @@ const Spotify = {
     },
 
     // ** Se encarga de la logica en el codigo para guardar Playlist del usuario en Spotify
-    async savePlaylist(name, trackUris) {
+    async savePlaylist(name, trackUris, playlistId) {
         if (!name || !trackUris || !trackUris.length) {
             return; // No hay nada que guardar, no es un error
         }
@@ -197,36 +253,59 @@ const Spotify = {
             Authorization: `Bearer ${accessToken}`,
             'Content-Type': 'application/json'
         };
-        let userId;
 
-        // PASO 1: Obtener el ID del usuario actual.
-        const userResponse = await fetch('https://api.spotify.com/v1/me', { headers });
-        if (!userResponse.ok) throw new Error(`Failed to fetch user data. Status: ${userResponse.status}`);
+        const currentUserId = await this.getCurrentUserId();
 
-        const userData = await userResponse.json();
-        userId = userData.id;
+        // ** Flujo condicional: ¿Estamos actualizando o creando?
+        if (playlistId) {
+            // --- LÓGICA PARA ACTUALIZAR UNA PLAYLIST EXISTENTE ---
+            // PASO 1: Actualizar el nombre de la playlist.
+            const updateNameResponse = await fetch(`https://api.spotify.com/v1/playlists/${playlistId}`, {
+                method: 'PUT',
+                headers,
+                body: JSON.stringify({ name })
+            });
+            if (!updateNameResponse.ok) {
+                throw new Error(`Failed to update playlist name. Status: ${updateNameResponse.status}`);
 
-        // PASO 2: Crear una nueva playlist para el usuario.
-        const playlistResponse = await fetch(`https://api.spotify.com/v1/users/${userId}/playlists`, {
-            method: 'POST',
-            headers,
-            body: JSON.stringify({ name, public: true })
-        });
-        // Asegura que estemos haciendo el fetch de playlistResponse correctamente
-        if (!playlistResponse.ok) throw new Error(`Failed to create playlist. Status: ${playlistResponse.status}`);
+            }
+                
+            // PASO 2: Reemplazar los tracks de la playlist.
+            const updateTracksResponse = await fetch(`https://api.spotify.com/v1/playlists/${playlistId}/tracks`, {
+                method: 'PUT',
+                headers,
+                body: JSON.stringify({ uris: trackUris })
+            });
+            if (!updateTracksResponse.ok) {
+                
+                throw new Error(`Failed to update playlist tracks. Status: ${updateTracksResponse.status}`);
+             } 
+             
+            } else { // Aqui se cierra el if(playlistId)
+            // --- LÓGICA PARA CREAR UNA NUEVA PLAYLIST.
+            // PASO 1: Crear una nueva playlist para el usuario.
+            const playlistResponse = await fetch(`https://api.spotify.com/v1/users/${currentUserId}/playlists`, {
+                method: 'POST',
+                headers,
+                body: JSON.stringify({ name, public: true })
+            });
 
-        const { id: playlistId } = await playlistResponse.json();
+            if (!playlistResponse.ok) throw new Error(`Failed to create playlist. Status: ${playlistResponse.status}`);
+            const { id: newPlaylistId } = await playlistResponse.json();
 
-        // PASO 3: Añadir las canciones a la nueva playlist
-        const addTracksResponse = await fetch(`https://api.spotify.com/v1/playlists/${playlistId}/tracks`, {
-            method: 'POST',
-            headers,
-            body: JSON.stringify({ uris: trackUris })
-        });
+            // PASO 2: Añadir las canciones a la nueva playlist.
+            const addTracksResponse = await fetch(`https://api.spotify.com/v1/playlists/${newPlaylistId}/tracks`, {
+                method: 'POST',
+                headers,
+                body: JSON.stringify({ uris: trackUris })
+            });
+            if (!addTracksResponse.ok) {
+                throw new Error(`Failed to add tracks to new playlist. Status: ${addTracksResponse.status}`);
+            }
 
-        // Revisamos si las tracks se estan añadiendo exitosamente
-        if (!addTracksResponse.ok) throw new Error(`Failed to add tracks to playlist. Status: ${addTracksResponse.status}`);
-    }
-};
+
+        } // Este cierra el else
+    } // Cierra SavePlatlis. 
+}; // Cierra el componente Spotify.
 
 export default Spotify;

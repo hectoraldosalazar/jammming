@@ -6,6 +6,7 @@ import './App.css';
 import Playlist from '../Playlist/Playlist';
 import SearchBar from '../SearchBar/SearchBar';
 import SearchResults from '../SearchResults/SearchResults';
+import UserPlaylists from '../UserPlaylists/UserPlaylists';
 import Spotify from '../../util/Spotify';
 
 const App = () => {
@@ -16,6 +17,9 @@ const App = () => {
     const [playlistTracks, setPlaylistTracks] = useState([]);
 
     const [playlistName, setPlaylistName] = useState('New Playlist');
+
+    // Nuevo estado para guardar el ID de la playlist que se está editando.
+    const [playlistId, setPlaylistId] = useState(null);
 
     const [isAuthenticated, setIsAuthenticated] = useState(false);
 
@@ -64,6 +68,21 @@ const App = () => {
         setPlaylistName(name);
     }, []);
 
+    // *** Nueva función para seleccionar una playlist existente ***
+    // Se pasa como prop a UserPlaylists.
+    const selectPlaylist = useCallback(async (id, name) => {
+        try {
+            // Llama a la API para obtener los tracks de la playlist seleccionada.
+            const tracks = await Spotify.getPlaylist(id);
+            setPlaylistName(name); // Actualiza el nombre de la playlist en la UI.
+            setPlaylistTracks(tracks); // Actualiza la lista de canciones.
+            setPlaylistId(id); // Guardar el ID de la playlist seleccionada.
+        } catch (error) {
+            console.error("Error al seleccionar la playlist:", error);
+            alert(`No se pudo cargar la playlist: ${error.message}`);
+        }
+    }, []);
+
     //Guarda la playlist en la cuenta de Spotify del usuario.
     const savePlaylist = useCallback(async () => {
         const trackURIs = playlistTracks.map(track => track.uri);
@@ -73,15 +92,17 @@ const App = () => {
         }
 
         try {
-            await Spotify.savePlaylist(playlistName, trackURIs);
+            await Spotify.savePlaylist(playlistName, trackURIs, playlistId); //3. Pasamos el ID de la playlist al guardar
             alert(`Playlist "${playlistName}" guardada exitosamente!`);
             setPlaylistName('New Playlist');
             setPlaylistTracks([]);
+            setPlaylistId(null); // Reseteamos el ID despues de guardar.
+
         } catch (error) {
             console.error("Error al guardar la playlist:", error);
             alert(`No se pudo guardar la playlist: ${error.message}`);
         } // Cierra el catch
-    }, [playlistName, playlistTracks]);
+    }, [playlistName, playlistTracks, playlistId]); // Añadimos playlistId a las dependencias.
 
     // Conecta la app a la API de Spotify para buscar canciones.
     const search = useCallback(async (term) => {
@@ -106,10 +127,14 @@ const App = () => {
                 {isAuthenticated ? (
                     <>
                         <SearchBar onSearch={search} />
-                        <div className="App-playlist">
-                            <SearchResults searchResults={searchResults} onAdd={addTrack} />
-                            <Playlist playlistName={playlistName} onNameChange={updatePlaylistName} playlistTracks={playlistTracks} onRemove={removeTrack} onSave={savePlaylist} />
+                        <div className="App-content">
+                            <UserPlaylists onSelectPlaylist={selectPlaylist} />
+                            <div className="App-playlist">
+                                <SearchResults searchResults={searchResults} onAdd={addTrack} />
+                                <Playlist playlistName={playlistName} onNameChange={updatePlaylistName} playlistTracks={playlistTracks} onRemove={removeTrack} onSave={savePlaylist} />
+                            </div>
                         </div>
+
                     </>
                 ) : (
                     <div className="Connect-container">
